@@ -1,0 +1,5 @@
+# The app injects data into index.html at an exact byte anchor, so the line
+# endings must survive a clone unchanged. Keep these files byte-for-byte.
+*.html -text
+*.mjs  -text
+*.mp4  binary
