@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RustSolverViewer — .hdv strategy viewer</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --muted:#8a92a6;
+          --fold:#4a5568; --check:#2f855a; --call:#2c9aa8; --bet:#c53030; --raise:#dd6b20; --allin:#b7791f; --accent:#63b3ed; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { display:flex; gap:12px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.5px; }
+  header .meta { color:var(--muted); font-size:12px; }
+  button, select, input[type=text] { background:#222732; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font-size:13px; }
+  button:hover { border-color:var(--accent); cursor:pointer; }
+  button.active { background:var(--accent); color:#000; border-color:var(--accent); }
+  main { display:grid; grid-template-columns: 300px 1fr 360px; gap:12px; padding:12px; min-height:calc(100vh - 56px); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:40px; text-align:center; color:var(--muted); margin:40px auto; max-width:640px; }
+  #drop.over { border-color:var(--accent); color:var(--text); }
+  .crumbs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .crumb { background:#222732; border-radius:999px; padding:3px 10px; font-size:12px; cursor:pointer; }
+  .crumb:hover { outline:1px solid var(--accent); }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
+  .act { border-radius:8px; padding:8px 12px; min-width:110px; cursor:pointer; border:1px solid transparent; color:#fff; }
+  .act small { display:block; opacity:.85; font-size:11px; }
+  .act:hover { border-color:#fff; }
+  .potline { font-size:15px; margin-top:8px; }
+  .potline b { color:var(--accent); }
+  .sizekey { display:flex; flex-wrap:wrap; gap:12px; font-size:11px; color:var(--muted); margin:-4px 0 12px; }
+  .sizekey i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:4px; vertical-align:-2px; }
+  .board { display:flex; gap:6px; align-items:center; margin:6px 0; }
+  .card { display:inline-block; width:34px; height:46px; border-radius:5px; background:#fff; color:#000; font-weight:700; text-align:center; line-height:46px; font-size:15px; }
+  .card.h, .card.d { color:#c53030; } .card.c { color:#2f855a; } .card.s { color:#111; }
+  .card.pick { width:28px; height:38px; line-height:38px; font-size:12px; cursor:pointer; opacity:.9; }
+  .card.pick:hover { outline:2px solid var(--accent); }
+  .card.dead { opacity:.25; pointer-events:none; }
+  .grid { display:grid; grid-template-columns:repeat(13,1fr); gap:2px; user-select:none; }
+  .cell { position:relative; aspect-ratio:1; background:#0b0d11; border-radius:3px; overflow:hidden; font-size:11px; cursor:pointer; }
+  .cell .lbl { position:absolute; left:3px; top:2px; z-index:2; text-shadow:0 0 3px #000; }
+  .cell .ev { position:absolute; right:3px; bottom:2px; z-index:2; font-size:9px; color:#fff; text-shadow:0 0 3px #000; }
+  .cell .bar { position:absolute; left:0; bottom:0; top:0; }
+  .cell.sel { outline:2px solid var(--accent); z-index:3; }
+  .cell.dim { opacity:.35; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { padding:4px 6px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th { color:var(--muted); cursor:pointer; position:sticky; top:0; background:var(--panel); }
+  td:first-child, th:first-child { text-align:left; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; }
+  .kv div:nth-child(odd) { color:var(--muted); }
+  .legend { display:flex; gap:10px; flex-wrap:wrap; font-size:12px; margin:6px 0; }
+  .legend span::before { content:""; display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; background:var(--c); vertical-align:middle; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+  .tree { font-size:12px; }
+  .tree div { padding:2px 0 2px var(--d); cursor:pointer; white-space:nowrap; }
+  .tree div:hover, .tree div.cur { color:var(--accent); }
+  .muted { color:var(--muted); }
+  h3 { margin:6px 0; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
+  @media (max-width:1100px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>RustSolverViewer</h1>
+  <span class="meta" id="title">open a .hdv file</span>
+  <input type="file" id="file" accept=".hdv,.json" style="display:none">
+  <button onclick="document.getElementById('file').click()">Open .hdv</button>
+  <span class="meta" id="meta"></span>
+  <span style="flex:1"></span>
+  <label class="meta">EV unit
+    <select id="unit"><option value="bb">bb</option><option value="chips">chips</option><option value="pot">% pot</option><option value="usd">$</option></select>
+  </label>
+  <button id="findBtn" title="Ctrl+F">Find line</button>
+</header>
+
+<div id="drop">Drop a <b>.hdv</b> file here, or use <b>Open .hdv</b>. Everything runs locally in your browser.</div>
+
+<main id="app" style="display:none">
+  <section class="panel">
+    <h3>Tree</h3>
+    <div class="board" id="board"></div>
+    <div class="kv" id="nodeinfo"></div>
+    <h3 style="margin-top:12px">Lines</h3>
+    <div class="tree" id="tree"></div>
+  </section>
+
+  <section class="panel">
+    <div class="crumbs" id="crumbs"></div>
+    <div class="potline" id="potline"></div>
+    <div class="actions" id="actions"></div>
+    <div class="sizekey" id="sizekey"></div>
+    <div id="chance" class="toolbar"></div>
+    <div class="toolbar">
+      <input type="text" id="filter" placeholder="filter: Ax, TT+, suited, $ds …" style="min-width:220px">
+      <select id="view"><option value="strategy">Strategy</option><option value="ev">EV</option><option value="range">Range / reach</option></select>
+      <label class="muted"><input type="checkbox" id="showEv"> EV labels</label>
+    </div>
+    <div class="toolbar" id="plobar" style="display:none">
+      <button id="ploBack">← all hands</button>
+      <span class="muted" id="ploTrail"></span>
+      <span style="flex:1"></span>
+      <label class="muted">above the diagonal
+        <select id="ploSplit">
+          <option value="ds">double suited</option>
+          <option value="s">top two suited</option>
+          <option value="merged">no split</option>
+        </select>
+      </label>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="grid" id="grid"></div>
+    <div id="omaha" class="muted" style="margin-top:8px"></div>
+  </section>
+
+  <section class="panel">
+    <h3>Hands</h3>
+    <div class="toolbar"><label class="muted"><input type="checkbox" id="groupClass" checked> group by class</label></div>
+    <div style="max-height:75vh; overflow:auto">
+      <table id="hands"><thead></thead><tbody></tbody></table>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+"use strict";
+const RANKS = "AKQJT98765432";
+let doc = null, cur = 0, sel = null, sortKey = "freq0", sortDir = -1;
+// the open square of the PLO matrix, and the square chosen inside it
+let ploDrill = null, ploPick = null;
+
+const $ = id => document.getElementById(id);
+// bets / raises coloured by % of the pot: [upper bound, colour, name]
+const SIZE_COLORS = [[40, "#f2c94c", "small"], [62, "#f2994a", "medium"], [90, "#e53e3e", "large"],
+                     [125, "#d53f8c", "pot"], [175, "#9b51e0", "overbet"], [Infinity, "#4c6ef5", "big overbet"]];
+const ALLIN_COLOR = "#78142a";
+const actColor = (n, a) => {
+  const nm = a.name.toLowerCase();
+  if (nm.startsWith("fold")) return "var(--fold)";
+  if (nm.startsWith("check")) return "var(--check)";
+  if (nm.startsWith("call")) return "var(--call)";
+  if (nm.startsWith("all")) return ALLIN_COLOR;
+  const p = pctPot(n, a);
+  if (p == null) return nm.startsWith("raise") ? "var(--raise)" : "var(--bet)";
+  return SIZE_COLORS.find(([hi]) => p < hi)[1];
+};
+const inkFor = c => (c === "#f2c94c" || c === "#f2994a") ? "#111" : "#fff";
+const sizeKey = () => SIZE_COLORS.map(([hi, c, name], i) => {
+  const lo = i ? SIZE_COLORS[i - 1][0] : 0;
+  return `<span><i style="background:${c}"></i>${name} ${hi === Infinity ? lo + "%+" : lo + "–" + hi + "%"}</span>`;
+}).join("") + `<span><i style="background:${ALLIN_COLOR}"></i>all-in</span>`;
+const suitCls = c => c[1];
+// bet / raise / all-in size as % of the pot (a raise: the part beyond the call over the pot after calling)
+const pctPot = (n, a) => {
+  if (!/^(bet|raise|all)/i.test(a.name)) return null;
+  if (a.pct_pot != null) return a.pct_pot;
+  const tc = n.to_call || 0, base = (n.pot || 0) + tc;
+  return base > 0 ? 100 * Math.max(0, (a.amount || 0) - tc) / base : null;
+};
+const actLabel = (n, a) => { const p = pctPot(n, a); return p == null ? a.name : `${a.name} (${p.toFixed(0)}%)`; };
+const fmtBB = chips => +(chips / ((doc && doc.game.bb) || 1)).toFixed(2) + " bb";
+
+function load(text) {
+  try { doc = JSON.parse(text); } catch (e) { alert("Not a valid .hdv file: " + e.message); return; }
+  if (doc.format !== "hdv") { alert("Missing format=hdv marker"); return; }
+  doc.byId = new Map(doc.nodes.map(n => [n.id, n]));
+  cur = doc.root; sel = null; ploDrill = null; ploPick = null;
+  $("drop").style.display = "none"; $("app").style.display = "grid";
+  $("title").textContent = doc.title || "untitled";
+  const m = doc.meta || {};
+  $("meta").textContent = `${doc.game.variant} ${doc.game.seats}-max · ${m.engine || ""} · ${m.iterations || 0} it · exploit ${(m.exploit_pct_pot ?? 0).toFixed(2)}% pot`;
+  render();
+}
+
+function node(id) { return doc.byId.get(id); }
+function unitConv(chips) {
+  const u = $("unit").value, n = node(cur);
+  if (u === "bb") return chips / (doc.game.bb || 1);
+  if (u === "pot") return 100 * chips / (n.pot || doc.pot || 1);
+  if (u === "usd") return chips * (doc.game.chip_value_usd || 1);
+  return chips;
+}
+function fmtEv(chips) {
+  const u = $("unit").value; const v = unitConv(chips);
+  return (u === "pot" ? v.toFixed(0) + "%" : u === "usd" ? "$" + v.toFixed(2) : v.toFixed(2));
+}
+
+function classOf(label) {
+  // hold'em label "AhKd" -> "AKo"; else return label itself (Omaha)
+  if (label.length !== 4) return label;
+  const r1 = label[0], s1 = label[1], r2 = label[2], s2 = label[3];
+  let a = RANKS.indexOf(r1), b = RANKS.indexOf(r2);
+  if (a < 0 || b < 0) return label;
+  if (a > b) { [a, b] = [b, a]; }
+  const hi = RANKS[a], lo = RANKS[b];
+  if (a === b) return hi + lo;
+  return hi + lo + (s1 === s2 ? "s" : "o");
+}
+
+function matchFilter(label, cls, expr) {
+  if (!expr.trim()) return true;
+  return expr.split(",").some(tok => {
+    tok = tok.trim().toLowerCase(); if (!tok) return false;
+    const c = cls.toLowerCase();
+    if (tok === "suited") return c.endsWith("s") || (label.length === 4 && label[1] === label[3]);
+    if (tok === "offsuit") return c.endsWith("o");
+    if (tok === "pairs") return c.length === 2 && c[0] === c[1];
+    if (tok === "$ds") { const s = {}; for (let i = 1; i < label.length; i += 2) s[label[i]] = (s[label[i]] || 0) + 1; return Object.values(s).filter(v => v >= 2).length >= 2; }
+    if (tok === "$ss") { const s = {}; for (let i = 1; i < label.length; i += 2) s[label[i]] = (s[label[i]] || 0) + 1; return Object.values(s).filter(v => v >= 2).length === 1; }
+    if (/^[akqjt2-9]x$/.test(tok)) return c.includes(tok[0]) || label.toLowerCase().includes(tok[0]);
+    if (/^([akqjt2-9])\1\+$/.test(tok)) { const r = RANKS.indexOf(tok[0].toUpperCase()); return c.length === 2 && c[0] === c[1] && RANKS.indexOf(c[0].toUpperCase()) <= r; }
+    if (/^[akqjt2-9][akqjt2-9][so]?\+$/.test(tok)) { const hi = tok[0].toUpperCase(), lo = RANKS.indexOf(tok[1].toUpperCase()); const sfx = tok[2] === "+" ? "" : tok[2];
+      return c[0] === tok[0] && RANKS.indexOf(c[1].toUpperCase()) <= lo && RANKS.indexOf(c[1].toUpperCase()) > RANKS.indexOf(hi) && (sfx ? c.endsWith(sfx) : true); }
+    return c.startsWith(tok) || label.toLowerCase().startsWith(tok);
+  });
+}
+
+function render() {
+  const n = node(cur);
+  // board
+  const bd = $("board"); bd.innerHTML = "";
+  const boardCards = (n.board || doc.board || []).concat(n.runout || []);
+  boardCards.forEach(c => { const d = document.createElement("span"); d.className = "card " + suitCls(c); d.textContent = c; bd.appendChild(d); });
+  if (!boardCards.length) bd.innerHTML = '<span class="muted">preflop</span>';
+  // node info
+  const pos = doc.game.positions || [];
+  const evs = (doc.meta && doc.meta.seat_evs) || [];
+  $("nodeinfo").innerHTML = [
+    ["Street", n.street || "-"], ["Pot", fmtBB(n.pot || 0)], ["To call", fmtBB(n.to_call || 0)],
+    ["Acting", n.type === "decision" ? (pos[n.player] || "P" + n.player) : n.type],
+    ["Stacks", (doc.stacks || []).map(fmtEv).join(" / ")],
+    ["Seat EV", evs.map((e, i) => (pos[i] || i) + " " + fmtEv(e)).join(" · ")],
+  ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
+  // crumbs
+  const path = []; let p = n; while (p) { path.unshift(p); p = p.parent == null ? null : node(p.parent); }
+  $("crumbs").innerHTML = path.map((x, i) => `<span class="crumb" data-id="${x.id}">${i === 0 ? "root" : (x.via || x.path.split(" ").slice(-1)[0] || x.type)}</span>`).join("");
+  $("crumbs").querySelectorAll(".crumb").forEach(el => el.onclick = () => { cur = +el.dataset.id; render(); });
+  // actions
+  $("potline").innerHTML = n.pot != null ? `Pot <b>${fmtBB(n.pot)}</b>${n.to_call ? ` · to call <b>${fmtBB(n.to_call)}</b>` : ""}` : "";
+  $("sizekey").innerHTML = n.type === "decision" && n.actions.some(a => /^(bet|raise|all)/i.test(a.name)) ? sizeKey() : "";
+  const ac = $("actions"); ac.innerHTML = "";
+  if (n.type === "decision") {
+    const totals = actionTotals(n);
+    n.actions.forEach((a, i) => {
+      const b = document.createElement("div"); b.className = "act"; const col = actColor(n, a); b.style.background = col; b.style.color = inkFor(col);
+      const pp = pctPot(n, a);
+      b.innerHTML = `${a.name}<small>${(100 * totals[i]).toFixed(1)}%${a.amount ? " · " + fmtBB(a.amount) : ""}${pp != null ? " · <b>" + pp.toFixed(0) + "% pot</b>" : ""}</small>`;
+      b.onclick = () => { if (a.child != null && doc.byId.has(a.child)) { const ch = node(a.child); ch.via = actLabel(n, a); cur = a.child; render(); } };
+      ac.appendChild(b);
+    });
+  } else if (n.type === "terminal") {
+    ac.innerHTML = `<span class="muted">terminal: ${n.kind} — pot ${fmtBB(n.pot || 0)}</span>`;
+  }
+  // chance
+  const ch = $("chance"); ch.innerHTML = "";
+  if (n.type === "chance") {
+    ch.innerHTML = `<span class="muted">deal the ${n.street}:</span>`;
+    const dead = new Set(boardCards);
+    for (const r of RANKS) for (const s of "shdc") {
+      const c = r + s; const d = document.createElement("span"); d.className = "card pick " + s + (dead.has(c) || !(n.children && n.children[c] != null) ? " dead" : ""); d.textContent = c;
+      d.onclick = () => { const id = n.children[c]; const x = node(id); x.via = c; cur = id; render(); };
+      ch.appendChild(d);
+    }
+  }
+  renderGrid(n); renderTable(n); renderTree();
+}
+
+function actionTotals(n) {
+  const k = n.actions.length; const t = new Array(k).fill(0); let w = 0;
+  n.hand_ids.forEach((h, i) => { const r = (n.reach ? n.reach[i] : 1) * (n.combos ? n.combos[i] : 1); w += r; n.freqs[i].forEach((f, j) => t[j] += r * f / 1000); });
+  return t.map(x => w ? x / w : 0);
+}
+
+// ---------------------------------------------------------------------------
+// the PLO double matrix
+// ---------------------------------------------------------------------------
+//
+// 16,432 canonical PLO4 hands do not fit in 169 squares, so the range is
+// sorted by its two highest cards into a grid that reads exactly like the
+// hold'em one, and clicking a square splits it by the two cards underneath.
+//
+// The keying follows the desktop app's `plo_matrix.rs` line for line - rank
+// values 0 (deuce) to 12 (ace), ace-high at the top left, pairs on the
+// diagonal, the chosen suited half above it - so the same hand lands in the
+// same square in both, and a screenshot of one can be compared with the other.
+const SPLIT_SUFFIX = { ds: "ds", s: "s", merged: "" };
+// RANKS reads ace-first, the rank *value* counts up from the deuce
+const rankValue = ch => { const i = RANKS.indexOf(ch.toUpperCase()); return i < 0 ? -1 : 12 - i; };
+const rankChar = v => RANKS[12 - v];
+
+function ploKey(label) {
+  const cards = [];
+  for (let i = 0; i + 1 < label.length; i += 2) {
+    const r = rankValue(label[i]), su = label[i + 1].toLowerCase();
+    if (r < 0 || !"shdc".includes(su)) return null;
+    cards.push([r, su]);
+  }
+  if (cards.length < 4) return null;
+  const rs = cards.map(c => c[0]).sort((a, b) => b - a);
+  // Asked of the ranks, not of the two cards the sort happened to pick out:
+  // which physical ace is "highest" in AsKhKs2c is an artefact of sorting,
+  // while "this hand holds a suited ace-king" is a fact about the hand.
+  const suited = (a, b) => cards.some(([ra, sa], i) => cards.some(([rb, sb], j) => i !== j && ra === a && rb === b && sa === sb));
+  const cnt = {};
+  cards.forEach(([, su]) => { cnt[su] = (cnt[su] || 0) + 1; });
+  return {
+    top: [rs[0], rs[1]], topSuited: suited(rs[0], rs[1]),
+    doubleSuited: Object.values(cnt).filter(v => v >= 2).length >= 2,
+    bottom: [rs[2], rs[3]], bottomSuited: suited(rs[2], rs[3]),
+  };
+}
+
+function ploCellIndex(r1, r2, upper) {
+  const hi = Math.max(r1, r2), lo = Math.min(r1, r2);
+  const rowHi = 12 - hi, rowLo = 12 - lo;
+  if (hi === lo) return rowHi * 13 + rowHi;
+  return upper ? rowHi * 13 + rowLo : rowLo * 13 + rowHi;
+}
+
+function ploUpper(k, split, level) {
+  if (split === "merged") return false;
+  if (split === "ds") return k.doubleSuited;
+  return level === "top" ? k.topSuited : k.bottomSuited;
+}
+
+function ploIndex(k, split, level) {
+  const [hi, lo] = level === "top" ? k.top : k.bottom;
+  return ploCellIndex(hi, lo, ploUpper(k, split, level));
+}
+
+function ploCellLabel(idx, split) {
+  const row = Math.floor(idx / 13), col = idx % 13;
+  const hi = 12 - Math.min(row, col), lo = 12 - Math.max(row, col);
+  return rankChar(hi) + rankChar(lo) + (row < col ? (SPLIT_SUFFIX[split] || "") : "");
+}
+
+/// Is this hand inside the open square? Used by the hand list, so the table
+/// and the chart never disagree about what is being looked at.
+function ploRowVisible(label) {
+  if (ploDrill == null) return true;
+  const k = ploKey(label);
+  if (!k) return false;
+  const split = $("ploSplit").value;
+  if (ploIndex(k, split, "top") !== ploDrill) return false;
+  return ploPick == null || ploIndex(k, split, "bottom") === ploPick;
+}
+
+function renderGrid(n) {
+  const g = $("grid"); g.innerHTML = ""; $("legend").innerHTML = ""; $("omaha").textContent = "";
+  $("plobar").style.display = "none";
+  if (n.type !== "decision") return;
+  const labels = doc.hands[n.player]; const isHoldem = labels.length && labels[0].length === 4;
+  const view = $("view").value, filt = $("filter").value;
+  $("legend").innerHTML = n.actions.map(a => `<span style="--c:${actColor(n, a)}">${actLabel(n, a)}</span>`).join("");
+  if (isHoldem) renderHoldemGrid(n, labels, view, filt, g);
+  else renderPloGrid(n, labels, view, filt, g);
+}
+
+/// One square, painted by the view: the action mix as stacked bars, EV on a
+/// cold-to-hot ramp, or reach as a wash of blue. Shared by both charts so the
+/// two read the same way.
+function paintCell(cell, a, n, view, maxD, evLo, evHi) {
+  if (view === "strategy") {
+    let x = 0;
+    a.f.forEach((f, k) => {
+      const p = f / a.w, bar = document.createElement("div");
+      bar.className = "bar"; bar.style.left = (100 * x) + "%"; bar.style.width = (100 * p) + "%";
+      bar.style.background = actColor(n, n.actions[k]); cell.appendChild(bar); x += p;
+    });
+    cell.style.opacity = 0.35 + 0.65 * Math.min(1, (a.w / a.n) / maxD);
+  } else if (view === "ev") {
+    const ev = a.ev / a.w, t = evHi > evLo ? (ev - evLo) / (evHi - evLo) : 0.5;
+    cell.style.background = `hsl(${120 * t},60%,${25 + 20 * t}%)`;
+  } else {
+    const t = (a.w / a.n) / maxD;
+    cell.style.background = `rgba(99,179,237,${0.15 + 0.85 * t})`;
+  }
+  if ($("showEv").checked && a.ev) cell.innerHTML += `<span class="ev">${fmtEv(a.ev / a.w)}</span>`;
+}
+
+function renderPloGrid(n, labels, view, filt, g) {
+  // Omaha postflop is solved in made-hand buckets - "two pair", "pair + SD" -
+  // so the node holds no four-card hands and there is nothing to key a square
+  // on. Say that, rather than drawing 169 empty squares and a count of hands
+  // that "could not be charted", which reads like a bug in the chart.
+  if (!labels.some(l => ploKey(l))) {
+    $("omaha").textContent = n.hand_ids.length
+      ? "solved in made-hand buckets (trips, two pair, a pair + draw), so this node holds no four-card hands — the PLO matrix needs per-hand strategies, which Omaha keeps preflop but not after the flop. Use the hand list on the right."
+      : "no hands at this node.";
+    return;
+  }
+  $("plobar").style.display = "flex";
+  const split = $("ploSplit").value;
+  const level = ploDrill == null ? "top" : "bottom";
+  const na = n.actions.length;
+  const cells = Array.from({ length: 169 }, () => ({ w: 0, n: 0, f: new Array(na).fill(0), ev: 0 }));
+  let combos = 0, unparsed = 0;
+  n.hand_ids.forEach((h, i) => {
+    const label = labels[h], k = ploKey(label);
+    if (!k) { unparsed++; return; }
+    if (!matchFilter(label, label, filt)) return;
+    // inside a drilled square only the hands of that square are keyed
+    if (level === "bottom" && ploIndex(k, split, "top") !== ploDrill) return;
+    const c = n.combos ? n.combos[i] : 1, r = (n.reach ? n.reach[i] : 1) * c;
+    if (!(r > 0)) return;
+    const a = cells[ploIndex(k, split, level)];
+    a.w += r; a.n += c; a.ev += r * ((n.ev && n.ev[i]) || 0); combos += c;
+    n.freqs[i].forEach((f, j) => { a.f[j] += r * f / 1000; });
+  });
+  const live = cells.filter(a => a.n > 0 && a.w > 0);
+  const maxD = Math.max(1e-9, ...live.map(a => a.w / a.n));
+  const evs = live.map(a => a.ev / a.w);
+  const evLo = evs.length ? Math.min(...evs) : 0, evHi = evs.length ? Math.max(...evs) : 0;
+  const selected = level === "top" ? ploDrill : ploPick;
+  for (let idx = 0; idx < 169; idx++) {
+    const a = cells[idx], lbl = ploCellLabel(idx, split);
+    const cell = document.createElement("div"); cell.className = "cell";
+    cell.innerHTML = `<span class="lbl">${lbl}</span>`;
+    const has = a.n > 0 && a.w > 0;
+    if (has) {
+      paintCell(cell, a, n, view, maxD, evLo, evHi);
+      cell.title = `${lbl} · ${a.n.toFixed(1)} combos\n` +
+        n.actions.map((act, j) => `${act.name} ${(100 * a.f[j] / a.w).toFixed(1)}%`).join("\n");
+    } else cell.classList.add("dim");
+    if (selected === idx) cell.classList.add("sel");
+    cell.onclick = () => {
+      if (level === "top") { if (has) { ploDrill = idx; ploPick = null; } }
+      else ploPick = ploPick === idx ? null : idx;
+      render();
+    };
+    g.appendChild(cell);
+  }
+  // Where you are, and the way back: a drilled 13x13 looks just like an
+  // undrilled one, so without this line the second matrix reads as the range
+  // having suddenly changed.
+  $("ploBack").style.display = level === "top" ? "none" : "";
+  $("ploTrail").textContent = level === "top"
+    ? "top two cards — click a square to split it by the two underneath"
+    : ploCellLabel(ploDrill, split) + " · bottom two" + (ploPick != null ? " · " + ploCellLabel(ploPick, split) : "");
+  let note = `${combos.toFixed(0)} combos` + (level === "bottom" ? " in this square" : "");
+  if (unparsed) note += ` · ${unparsed} hands could not be charted`;
+  if (labels.length && labels[0].length > 8) note += " · the cards below the fourth are not keyed";
+  $("omaha").textContent = note;
+}
+
+function renderHoldemGrid(n, labels, view, filt, g) {
+  // aggregate combos -> 169 classes
+  const agg = {};
+  n.hand_ids.forEach((h, i) => {
+    const cls = classOf(labels[h]); const r = (n.reach ? n.reach[i] : 1) * (n.combos ? n.combos[i] : 1);
+    const a = agg[cls] || (agg[cls] = { w: 0, f: new Array(n.actions.length).fill(0), ev: 0, n: 0 });
+    a.w += r; a.n += (n.combos ? n.combos[i] : 1); n.freqs[i].forEach((f, j) => a.f[j] += r * f / 1000); a.ev += r * ((n.ev && n.ev[i]) || 0);
+  });
+  const maxW = Math.max(1e-9, ...Object.values(agg).map(a => a.w / a.n));
+  const evs = Object.values(agg).map(z => z.ev / z.w);
+  const evLo = evs.length ? Math.min(...evs) : 0, evHi = evs.length ? Math.max(...evs) : 0;
+  for (let i = 0; i < 13; i++) for (let j = 0; j < 13; j++) {
+    const hi = RANKS[Math.min(i, j)], lo = RANKS[Math.max(i, j)];
+    const cls = i === j ? hi + lo : hi + lo + (i < j ? "s" : "o");
+    const cell = document.createElement("div"); cell.className = "cell"; cell.dataset.cls = cls;
+    const a = agg[cls];
+    cell.innerHTML = `<span class="lbl">${cls}</span>`;
+    if (a && a.w > 0 && matchFilter(cls, cls, filt)) {
+      paintCell(cell, a, n, view, maxW, evLo, evHi);
+    } else cell.classList.add("dim");
+    if (sel === cls) cell.classList.add("sel");
+    cell.onclick = () => { sel = sel === cls ? null : cls; render(); };
+    g.appendChild(cell);
+  }
+}
+
+function renderTable(n) {
+  const t = $("hands"); const th = t.querySelector("thead"), tb = t.querySelector("tbody"); th.innerHTML = ""; tb.innerHTML = "";
+  if (n.type !== "decision") return;
+  const labels = doc.hands[n.player]; const filt = $("filter").value;
+  const isHoldem = labels.length && labels[0].length === 4;
+  const group = $("groupClass").checked && isHoldem;
+  const cols = [["hand", "Hand"], ["combos", "Combos"], ["reach", "Reach"], ...n.actions.map((a, i) => ["freq" + i, a.name]), ["ev", "EV"]];
+  th.innerHTML = "<tr>" + cols.map(([k, l]) => `<th data-k="${k}">${l}${sortKey === k ? (sortDir < 0 ? " ▼" : " ▲") : ""}</th>`).join("") + "</tr>";
+  th.querySelectorAll("th").forEach(el => el.onclick = () => { const k = el.dataset.k; if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = -1; } renderTable(n); });
+  const rows = {};
+  n.hand_ids.forEach((h, i) => {
+    const label = labels[h], cls = classOf(label); if (!matchFilter(label, cls, filt)) return; if (sel && cls !== sel) return;
+    if (!isHoldem && !ploRowVisible(label)) return;
+    const key = group ? cls : label; const c = n.combos ? n.combos[i] : 1; const r = (n.reach ? n.reach[i] : 1) * c;
+    const row = rows[key] || (rows[key] = { hand: key, combos: 0, reachw: 0, w: 0, f: new Array(n.actions.length).fill(0), ev: 0 });
+    row.combos += c; row.reachw += r; row.w += r; n.freqs[i].forEach((f, j) => row.f[j] += r * f / 1000); row.ev += r * ((n.ev && n.ev[i]) || 0);
+  });
+  const list = Object.values(rows).map(r => ({ hand: r.hand, combos: r.combos, reach: r.reachw / Math.max(r.combos, 1e-9), ev: r.w ? r.ev / r.w : 0, ...Object.fromEntries(r.f.map((f, j) => ["freq" + j, r.w ? f / r.w : 0])) }));
+  list.sort((a, b) => { const x = a[sortKey], y = b[sortKey]; return (typeof x === "string" ? x.localeCompare(y) : x - y) * sortDir; });
+  tb.innerHTML = list.map(r => `<tr><td>${r.hand}</td><td>${r.combos.toFixed(1)}</td><td>${(100 * r.reach).toFixed(0)}%</td>${n.actions.map((a, j) => `<td style="color:${r["freq" + j] > 0.005 ? "#fff" : "var(--muted)"}">${(100 * r["freq" + j]).toFixed(1)}%</td>`).join("")}<td>${fmtEv(r.ev)}</td></tr>`).join("");
+}
+
+function renderTree() {
+  const t = $("tree"); t.innerHTML = "";
+  const walk = (id, depth, via) => {
+    const n = node(id); if (!n) return;
+    const d = document.createElement("div"); d.style.setProperty("--d", depth * 12 + "px");
+    d.textContent = (via || "root") + (n.type === "decision" ? ` (${(doc.game.positions || [])[n.player] || n.player})` : n.type === "chance" ? ` [${n.street}]` : ` ·${n.kind}`);
+    if (id === cur) d.classList.add("cur");
+    d.onclick = () => { n.via = via; cur = id; render(); };
+    t.appendChild(d);
+    if (depth > 6) return;
+    if (n.type === "decision") n.actions.forEach(a => { if (a.child != null && doc.byId.has(a.child)) walk(a.child, depth + 1, actLabel(n, a)); });
+  };
+  walk(doc.root, 0, null);
+}
+
+function findLine() {
+  const q = prompt("Line to find (e.g. 'check check bet'):"); if (!q) return;
+  const toks = q.toLowerCase().split(/\s+/).filter(Boolean); let id = doc.root;
+  for (const tk of toks) {
+    const n = node(id); if (!n || n.type !== "decision") { alert("Line not found at '" + tk + "'"); return; }
+    const a = n.actions.find(x => x.name.toLowerCase().replace(/[^a-z0-9]/g, "").startsWith(tk.replace(/[^a-z0-9]/g, "")));
+    if (!a || a.child == null) { alert("No action '" + tk + "' here"); return; }
+    node(a.child).via = actLabel(n, a); id = a.child;
+    const c = node(id); if (c.type === "chance") { const first = Object.keys(c.children || {})[0]; if (!first) break; node(c.children[first]).via = first; id = c.children[first]; }
+  }
+  cur = id; render();
+}
+
+$("file").onchange = e => { const f = e.target.files[0]; if (f) f.text().then(load); };
+const dz = $("drop");
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("over"); }));
+document.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) f.text().then(load); });
+["unit", "view", "showEv", "groupClass"].forEach(id => $(id).onchange = () => doc && render());
+$("filter").oninput = () => doc && render();
+// the open square is an address in the old layout: holding on to it across a
+// split change would quietly show a different rank pair
+$("ploSplit").onchange = () => { ploDrill = null; ploPick = null; if (doc) render(); };
+$("ploBack").onclick = () => { ploDrill = null; ploPick = null; render(); };
+$("findBtn").onclick = () => doc && findLine();
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && doc) { e.preventDefault(); findLine(); } });
+// allow ?file=... for sample packs served next to the viewer
+const qs = new URLSearchParams(location.search); if (qs.get("file")) fetch(qs.get("file")).then(r => r.text()).then(load).catch(() => {});
+// a page written by the RustSolver trainer embeds its spot: open it at that decision with the hand selected
+if (window.HDV_DATA) {
+  load(JSON.stringify(window.HDV_DATA));
+  if (window.HDV_START != null && doc && doc.byId.has(window.HDV_START)) cur = window.HDV_START;
+  if (window.HDV_HAND_LABEL) sel = classOf(window.HDV_HAND_LABEL);
+  if (doc) render();
+}
+})();
+</script>
+</body>
+</html>
